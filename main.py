@@ -1,4 +1,14 @@
-import streamlit as st
+# NOTE: To run locally:
+# pip install streamlit playwright openai
+# playwright install
+
+import sys
+try:
+    import streamlit as st
+except ModuleNotFoundError:
+    print("ERROR: Please install Streamlit using 'pip install streamlit'")
+    sys.exit(1)
+
 import asyncio
 from playwright.async_api import async_playwright
 from datetime import datetime
@@ -6,37 +16,36 @@ import os
 import json
 import urllib.parse
 from openai import OpenAI
-import threading
 
-
+# 📦 OpenAI Setup
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+# Config
 adults = 2
 children = 0
 rooms = 1
 
-# GPT Extraction
-
+# 🧠 GPT Extractor
 def gpt_extract(prompt, label):
     try:
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": f"You extract hotel room names and their prices from {label} page text."},
+                {"role": "system", "content": f"You extract hotel room names and prices from {label} page text."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.3
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
-        st.error(f"GPT Error ({label}): {e}")
+        st.error(f"[GPT ERROR] {label}: {e}")
         return ""
 
 def extract_booking_prices(text):
     prompt = f"""
-You are a travel assistant. From the following Booking.com page text, extract **room names** and their corresponding **price (in INR)**.
+From the Booking.com page text, extract room names and INR prices.
 
-✨ Use only room names that match:
+Only extract rooms matching:
 - Super Deluxe Room with Balcony
 - Superior Double Room
 - Deluxe King Room
@@ -49,17 +58,15 @@ You are a travel assistant. From the following Booking.com page text, extract **
 Format:
 Room Name – ₹Price
 
-Only extract ONE price per room. Skip unmatched names.
-
 {text}
 """
     return gpt_extract(prompt, "Booking")
 
 def extract_agoda_prices(text):
     prompt = f"""
-You are a travel assistant. From the following Agoda page text, extract **room names** and their corresponding **price (in INR)**.
+From the Agoda page text, extract room names and INR prices.
 
-✨ Use only room names that match:
+Only extract rooms matching:
 - Superior Room
 - Super Deluxe Room with Balcony
 - Super Deluxe Room 
@@ -73,17 +80,15 @@ You are a travel assistant. From the following Agoda page text, extract **room n
 Format:
 Room Name – ₹Price
 
-Only extract ONE price per room. Skip unmatched names.
-
 {text}
 """
     return gpt_extract(prompt, "Agoda")
 
 def extract_goibibo_prices(text):
     prompt = f"""
-You are a travel assistant. From the following Goibibo page text, extract **room names** and their corresponding **price (in INR)**.
+From the Goibibo page text, extract room names and INR prices.
 
-✨ Use only room names that match:
+Only extract rooms matching:
 - Super Delux Balcony Room
 - Superior Rooms
 - Deluxe Room with Balcony
@@ -92,12 +97,11 @@ You are a travel assistant. From the following Goibibo page text, extract **room
 Format:
 Room Name – ₹Price
 
-Only extract ONE price per room. Skip unmatched names.
-
 {text}
 """
     return gpt_extract(prompt, "Goibibo")
 
+# 🔗 Goibibo URL Generator
 def generate_goibibo_link(checkin, checkout):
     ci = datetime.strptime(checkin, "%Y-%m-%d").strftime("%Y%m%d")
     co = datetime.strptime(checkout, "%Y-%m-%d").strftime("%Y%m%d")
@@ -114,10 +118,17 @@ def generate_goibibo_link(checkin, checkout):
         f"&cityCode={city_code}&mmtId={mmt_id}&topHtlId={mmt_id}&FS=GSU&city={city_name}&sType=hotel"
     )
 
+# 🌍 Scraper
 async def extract_text_from_sites(urls):
     extracted = {}
     async with async_playwright() as p:
-        browser = await p.firefox.launch(headless=True)
+        try:
+            await p.install()
+        except:
+            pass
+
+        # ✅ Use Chromium (Firefox fails on Render)
+        browser = await p.chromium.launch(headless=True)
         context = await browser.new_context()
         page = await context.new_page()
 
@@ -125,20 +136,22 @@ async def extract_text_from_sites(urls):
             try:
                 await page.goto(url, timeout=90000, wait_until='load')
                 await page.wait_for_timeout(5000)
-                full_text = await page.evaluate("document.body.innerText")
-                extracted[site] = full_text
+                text = await page.evaluate("document.body.innerText")
+                extracted[site] = text
             except Exception as e:
-                st.error(f"Error scraping {site}: {e}")
+                st.error(f"[SCRAPE ERROR] {site}: {e}")
 
         await browser.close()
     return extracted
 
+# Wrapper to run asyncio inside Streamlit
 def run_playwright_in_thread(urls):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     return loop.run_until_complete(extract_text_from_sites(urls))
 
-# Streamlit UI
+# 🌟 Streamlit UI
+st.set_page_config(page_title="Hotel Price Extractor", layout="centered")
 st.title("🛎️ Hotel Price Extractor")
 
 checkin = st.date_input("Check-in Date", value=datetime(2025, 7, 2)).strftime("%Y-%m-%d")
@@ -146,15 +159,8 @@ checkout = st.date_input("Check-out Date", value=datetime(2025, 7, 3)).strftime(
 
 if st.button("Extract Hotel Prices"):
     urls = {
-        "booking": (
-            f"https://www.booking.com/hotel/in/goverdhan-greens-resort.en-gb.html?"
-            f"checkin={checkin}&checkout={checkout}&group_adults={adults}&group_children={children}&no_rooms={rooms}&selected_currency=INR"
-        ),
-        "agoda": (
-            f"https://www.agoda.com/goverdhan-greens/hotel/baradia-in.html?"
-            f"adults={adults}&children={children}&rooms={rooms}&checkIn={checkin}"
-            f"&los={(datetime.strptime(checkout, '%Y-%m-%d') - datetime.strptime(checkin, '%Y-%m-%d')).days}&currencyCode=INR"
-        ),
+        "booking": f"https://www.booking.com/hotel/in/goverdhan-greens-resort.en-gb.html?checkin={checkin}&checkout={checkout}&group_adults={adults}&group_children={children}&no_rooms={rooms}&selected_currency=INR",
+        "agoda": f"https://www.agoda.com/goverdhan-greens/hotel/baradia-in.html?adults={adults}&children={children}&rooms={rooms}&checkIn={checkin}&los={(datetime.strptime(checkout, '%Y-%m-%d') - datetime.strptime(checkin, '%Y-%m-%d')).days}&currencyCode=INR",
         "goibibo": generate_goibibo_link(checkin, checkout),
     }
 
@@ -162,6 +168,7 @@ if st.button("Extract Hotel Prices"):
         text_data = run_playwright_in_thread(urls)
 
     st.success("Scraping complete. Running GPT extraction...")
+
     all_data = {}
 
     for site, text in text_data.items():
@@ -185,8 +192,11 @@ if st.button("Extract Hotel Prices"):
 
         all_data[site] = extracted
 
+    # 🖥 Output
     st.header("📊 Extracted Hotel Prices")
     for site in all_data:
         st.subheader(site.capitalize())
+        if not all_data[site]:
+            st.write("No results found.")
         for room, price in all_data[site].items():
-            st.write(f"- {room}: {price}")
+            st.markdown(f"- **{room}**: {price}")
