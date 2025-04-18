@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: hotel-price-extractor
+    env: python
+    buildCommand: |
+      pip install -r requirements.txt
+      python -m playwright install chromium
+    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+    plan: free
